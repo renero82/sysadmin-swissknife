@@ -1,6 +1,6 @@
 # Sysadmin Swissknife
 
-Small network tools for system administrators, in a native-looking **macOS app**.
+Small network tools for system administrators, as a desktop app for **macOS** and **Windows**.
 
 ![Subnet Splitter](docs/splitter.png)
 
@@ -29,12 +29,16 @@ Type an address and a subnet and see immediately if it is **inside** or **outsid
 
 ## Download
 
-Get `sysadmin-swissknife-vX.Y.Z-macos-arm64.zip` from the
-[latest release](https://github.com/renero82/sysadmin-swissknife/releases/latest),
-unzip it and drag **Sysadmin Swissknife.app** to Applications.
+From the [latest release](https://github.com/renero82/sysadmin-swissknife/releases/latest):
 
-The app is not signed: the first time, right-click it → **Open** → **Open**.
-If macOS says the app is damaged, run once:
+- **macOS (Apple Silicon)**: `sysadmin-swissknife-vX.Y.Z-macos-arm64.zip` - unzip it and drag
+  **Sysadmin Swissknife.app** to Applications
+- **Windows**: `sysadmin-swissknife-vX.Y.Z-windows-portable.exe` - a single portable file,
+  nothing to install: put it wherever you like and run it
+
+The apps are not signed. On Windows, in the SmartScreen dialog click **More info** →
+**Run anyway**. On macOS, the first time right-click the app → **Open** → **Open**;
+if macOS says the app is damaged, run once:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/Sysadmin Swissknife.app"
@@ -54,10 +58,11 @@ python3 app.py
 
 ```bash
 pip install pytest && python -m pytest -q tests     # unit tests of the subnet logic
-./scripts/build_macos.sh                             # tests + app build + selftest
+./scripts/build_macos.sh                             # tests + app build + selftest (macOS)
+pyinstaller --noconfirm sysadmin_swissknife.spec     # on Windows: dist\Sysadmin Swissknife.exe
 ```
 
-Pushing a tag like `v1.0.0` makes GitHub Actions run the tests, build the app, run its
+Pushing a tag like `v1.1.0` makes GitHub Actions run the tests, build the macOS and Windows apps, run their
 `--selftest` and publish the release. The tag must match the version in
 `sysadmin_swissknife/__init__.py`.
 

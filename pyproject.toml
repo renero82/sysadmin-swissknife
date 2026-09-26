@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sysadmin-swissknife"
-version = "1.0.0"
+version = "1.1.0"
 description = "Small network tools for system administrators: visual subnet splitter and IP-in-subnet check"
 readme = "README.md"
 license = { text = "MIT" }

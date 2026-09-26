@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+- Windows version: a single portable `.exe`, nothing to install.
+- The release workflow builds and selftests both the macOS and the Windows app.
+
 ## 1.0.0
 First release.
 - **Subnet Splitter**: visual IPv4 subnet calculator in the style of the davidc.net
