@@ -1,4 +1,6 @@
 import ipaddress
+import subprocess
+import shutil
 
 import pytest
 
@@ -48,8 +50,11 @@ def test_state_roundtrip():
     t = SubnetTree(N("10.0.0.0/16"))
     t.root.divide(); t.root.children[1].divide(); t.root.children[1].children[0].divide()
     state = t.to_state()
-    t2 = SubnetTree.from_leaves(N("10.0.0.0/16"), [N(s) for s in state.split(",")])
-    assert t2.to_state() == state
+    assert SubnetTree.from_state(N("10.0.0.0/16"), state).to_state() == state
+    # the 1.0 format (flat list of leaves) is still accepted
+    flat = ",".join(str(l.network) for l in t.leaves())
+    assert [l.network for l in SubnetTree.from_state(N("10.0.0.0/16"), flat).leaves()] == \
+           [l.network for l in t.leaves()]
 
 
 def test_cannot_divide_32():
@@ -78,3 +83,42 @@ def test_check_notes():
     assert check("192.168.1.10", "192.168.1.0/24").notes[0] == "usable host 10 of 254"
     r = check("192.168.1.10", "192.168.1.77/24")
     assert r.inside and any("host bits" in n for n in r.notes)
+
+
+# ------------------------------------------------------------------ IPv6
+N6 = ipaddress.IPv6Network
+
+
+def test_parse_v6():
+    assert parse_network("2001:db8::/32") == (N6("2001:db8::/32"), False)
+    assert parse_network("2001:db8::1") == (N6("2001:db8::1/128"), False)
+    assert parse_network("2001:db8:: 48") == (N6("2001:db8::/48"), False)
+    assert parse_network("2001:db8::1/64") == (N6("2001:db8::/64"), True)
+
+
+def test_info_v6():
+    i = SubnetInfo(N6("2001:db8::/64"))
+    assert i.hosts == 2**64 and i.hosts_text == "2^64"
+    assert i.usable_range == "2001:db8:: - 2001:db8::ffff:ffff:ffff:ffff"
+    assert SubnetInfo(N6("2001:db8::1/128")).usable_range == "2001:db8::1"
+    assert SubnetInfo(N6("2001:db8::/127")).hosts == 2
+
+
+def test_divide_nibbles_and_limit():
+    t = SubnetTree(N6("2001:db8::/48"))
+    t.root.divide(4)
+    assert len(t.leaves()) == 16 and str(t.leaves()[1].network) == "2001:db8:0:1000::/52"
+    ok, msg = t.can_divide(t.leaves()[0], 16)
+    assert not ok and "limit" in msg
+    state = t.to_state()
+    assert SubnetTree.from_state(N6("2001:db8::/48"), state).to_state() == state
+    cells = t.join_cells()
+    assert len(cells) == 1 and cells[0][3] == 16
+
+
+def test_check_v6():
+    assert check("2001:db8::10", "2001:db8::/64").status == "inside"
+    assert check("2001:db9::10", "2001:db8::/32").status == "outside"
+    assert "anycast" in check("2001:db8::", "2001:db8::/64").notes[0]
+    with pytest.raises(ValueError):
+        check("10.0.0.1", "2001:db8::/32")

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+- **IPv6** in the Subnet Splitter and in IP in Subnet? (hex view, anycast note, 2^n counts).
+- Subnet Splitter: **Divide into** 2, 4, 16 or 256 parts; the saved layout keeps the grouping.
+- New **MOTD Builder**: ASCII-art banners, icons, frames, colors, legal warnings and live
+  system information, as a static `/etc/motd` or a dynamic script for Ubuntu/Debian or RHEL.
+- GitHub Actions updated to the Node 24 versions.
+
 ## 1.1.0
 - Windows version: a single portable `.exe`, nothing to install.
 - The release workflow builds and selftests both the macOS and the Windows app.

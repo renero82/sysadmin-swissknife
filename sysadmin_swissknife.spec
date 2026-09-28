@@ -5,12 +5,15 @@
 import re
 import sys
 
+from PyInstaller.utils.hooks import collect_data_files
+
 __version__ = re.search(r'__version__ = "([^"]+)"',
                         open("sysadmin_swissknife/__init__.py").read()).group(1)
 
 a = Analysis(
     ["app.py"],
-    datas=[("assets/icon.png", "assets")],
+    datas=[("assets/icon.png", "assets")] + collect_data_files("pyfiglet"),
+    hiddenimports=["pyfiglet.fonts"],
     excludes=[
         "tkinter", "matplotlib", "numpy", "scipy", "pandas", "IPython",
         "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick",

@@ -9,13 +9,14 @@ from pathlib import Path
 from PySide6.QtCore import QSettings, Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontDatabase, QKeySequence
 from PySide6.QtWidgets import (
-    QAbstractItemView, QApplication, QCheckBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
+    QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
     QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from . import APP_NAME, __version__
-from .subnet import SubnetInfo, SubnetTree, check, parse_network
+from .subnet import SubnetInfo, SubnetTree, check, format_count, parse_network
+from .motd_tab import MotdTab
 
 REPO_URL = "https://github.com/renero82/sysadmin-swissknife"
 
@@ -24,7 +25,7 @@ INFO_COLUMNS = [
     ("netmask", "Netmask", lambda i: i.netmask),
     ("range", "Range of addresses", lambda i: i.address_range),
     ("usable", "Usable IPs", lambda i: i.usable_range),
-    ("hosts", "Hosts", lambda i: f"{i.hosts:,}"),
+    ("hosts", "Hosts", lambda i: i.hosts_text),
 ]
 
 
@@ -53,7 +54,7 @@ class SplitterTab(QWidget):
         top = QHBoxLayout()
         top.addWidget(QLabel("Network"))
         self.ed_network = QLineEdit()
-        self.ed_network.setPlaceholderText("e.g. 192.168.0.0/24  or  10.0.0.0 255.255.0.0")
+        self.ed_network.setPlaceholderText("e.g. 192.168.0.0/24,  10.0.0.0 255.255.0.0  or  2001:db8::/48")
         self.ed_network.returnPressed.connect(self.update_network)
         top.addWidget(self.ed_network, stretch=1)
         self.btn_update = QPushButton("Update")
@@ -75,6 +76,14 @@ class SplitterTab(QWidget):
             self.cb_columns[key] = cb
             opts.addWidget(cb)
         opts.addStretch()
+        opts.addWidget(QLabel("Divide into"))
+        self.cmb_step = QComboBox()
+        for parts, bits in (("2 parts", 1), ("4 parts", 2), ("16 parts", 4), ("256 parts", 8)):
+            self.cmb_step.addItem(parts, bits)
+        self.cmb_step.setToolTip("How many pieces the Divide button creates.\n"
+                                 "16 parts = one hex digit: handy for IPv6 (e.g. /48 -> /52).")
+        self.cmb_step.setCurrentIndex(int(self.settings.value("splitter/step", 0)))
+        opts.addWidget(self.cmb_step)
         self.btn_copy = QPushButton("Copy table")
         self.btn_copy.clicked.connect(self.copy_table)
         self.btn_csv = QPushButton("Export CSV\u2026")
@@ -114,9 +123,8 @@ class SplitterTab(QWidget):
         tree = SubnetTree(net)
         if state:
             try:
-                from ipaddress import IPv4Network
-                tree = SubnetTree.from_leaves(net, [IPv4Network(s) for s in state.split(",")])
-            except ValueError:
+                tree = SubnetTree.from_state(net, state)
+            except (ValueError, StopIteration):
                 tree = SubnetTree(net)
         self.tree = tree
         if host_bits:
@@ -151,7 +159,9 @@ class SplitterTab(QWidget):
 
     # ------------------------------------------------------------------ view
     def visible_columns(self):
-        return [(k, h, g) for k, h, g in INFO_COLUMNS if self.cb_columns[k].isChecked()]
+        v6 = bool(self.tree) and self.tree.root.network.version == 6
+        return [(k, h, g) for k, h, g in INFO_COLUMNS if self.cb_columns[k].isChecked()
+                and not (v6 and k == "usable")]      # IPv6: no broadcast, same as the range
 
     def refresh(self, *_):
         if not self.tree:
@@ -159,6 +169,7 @@ class SplitterTab(QWidget):
         leaves = self.tree.leaves()
         info_cols = self.visible_columns()
         n_join = self.tree.max_depth()
+        self.cb_columns["usable"].setEnabled(self.tree.root.network.version == 4)
         self.divide_col = 1 + len(info_cols)
         self.join_col0 = self.divide_col + 1
         headers = ["Subnet address"] + [h for _, h, _ in info_cols] + ["Divide"]
@@ -186,8 +197,8 @@ class SplitterTab(QWidget):
                 t.setItem(r, c, it)
             btn = QPushButton("Divide")
             btn.setEnabled(leaf.can_divide)
-            btn.setToolTip(f"Split {info.cidr} into two /{leaf.network.prefixlen + 1}"
-                           if leaf.can_divide else "A /32 cannot be divided")
+            btn.setToolTip(f"Split {info.cidr} (size set in \u201cDivide into\u201d)"
+                           if leaf.can_divide else f"A /{leaf.network.prefixlen} cannot be divided")
             btn.clicked.connect(lambda _=False, n=leaf: self.divide(n))
             t.setCellWidget(r, self.divide_col, btn)
 
@@ -198,6 +209,8 @@ class SplitterTab(QWidget):
             it.setTextAlignment(Qt.AlignCenter)
             it.setBackground(depth_color(node.depth))
             it.setToolTip(f"Click to join back into {node.network}")
+            if len(str(node.network.prefixlen)) > 2 or span == 1:
+                it.setText(str(node.network.prefixlen))
             t.setItem(first, c, it)
             if span > 1:
                 t.setSpan(first, c, span, 1)
@@ -207,16 +220,23 @@ class SplitterTab(QWidget):
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
         for c in range(self.join_col0, t.columnCount()):
             hh.setSectionResizeMode(c, QHeaderView.Fixed)
-            t.setColumnWidth(c, 44)
+            t.setColumnWidth(c, 48)
 
         total_hosts = sum(leaf.info.hosts for leaf in leaves)
         self.lbl_summary.setText(
             f"{self.tree.root.network}  \u2022  {len(leaves)} subnet(s)  \u2022  "
-            f"{total_hosts:,} usable hosts in total  \u2022  click a colored Join cell to merge")
+            f"{format_count(total_hosts)} usable addresses in total  \u2022  "
+            f"click a colored Join cell to merge")
         self.save_state()
 
-    def divide(self, node):
-        node.divide()
+    def divide(self, node, bits: int | None = None):
+        bits = bits or self.cmb_step.currentData()
+        ok, why = self.tree.can_divide(node, bits)
+        if not ok:
+            self.show_message(f"Cannot divide {node.network}: {why}.", error=True)
+            return
+        self.show_message("")
+        node.divide(bits)
         self.refresh()
 
     def cell_clicked(self, row, col):
@@ -256,6 +276,7 @@ class SplitterTab(QWidget):
         s = self.settings
         s.setValue("splitter/network", str(self.tree.root.network))
         s.setValue("splitter/state", self.tree.to_state())
+        s.setValue("splitter/step", self.cmb_step.currentIndex())
         for key, cb in self.cb_columns.items():
             s.setValue(f"splitter/show_{key}", "true" if cb.isChecked() else "false")
 
@@ -270,9 +291,9 @@ class CheckTab(QWidget):
 
         form = QFormLayout()
         self.ed_ip = QLineEdit(self.settings.value("check/ip", "192.168.1.10"))
-        self.ed_ip.setPlaceholderText("e.g. 192.168.1.10  or  192.168.1.10/32  (a network works too)")
+        self.ed_ip.setPlaceholderText("e.g. 192.168.1.10,  192.168.1.10/32  or  2001:db8::10  (a network works too)")
         self.ed_subnet = QLineEdit(self.settings.value("check/subnet", "192.168.1.0/24"))
-        self.ed_subnet.setPlaceholderText("e.g. 192.168.1.0/24  or  192.168.1.0 255.255.255.0")
+        self.ed_subnet.setPlaceholderText("e.g. 192.168.1.0/24,  192.168.1.0 255.255.255.0  or  2001:db8::/64")
         for ed in (self.ed_ip, self.ed_subnet):
             ed.setFont(mono_font())
             ed.textChanged.connect(self.evaluate)
@@ -299,6 +320,7 @@ class CheckTab(QWidget):
         self.detail_labels = {}
         for key in ("Subnet", "Netmask", "Wildcard", "Network address", "Broadcast address",
                     "Usable range", "Usable hosts", "IP in binary", "Subnet in binary"):
+            # the last four labels are renamed for IPv6 in evaluate()
             lbl = QLabel()
             lbl.setFont(mono_font())
             lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -317,6 +339,22 @@ class CheckTab(QWidget):
 
         self.result = None
         self.evaluate()
+
+    @staticmethod
+    def hexview(addr, prefix: int) -> str:
+        """IPv6: expanded address, network nibbles in bold, host nibbles in gray."""
+        digits = addr.exploded.replace(":", "")
+        out = []
+        for i, d in enumerate(digits):
+            if i and i % 4 == 0:
+                out.append(":")
+            if (i + 1) * 4 <= prefix:
+                out.append(f"<b>{d}</b>")
+            elif i * 4 < prefix:
+                out.append(f"<u><b>{d}</b></u>")          # nibble split by the prefix
+            else:
+                out.append(f"<span style='color:gray'>{d}</span>")
+        return "".join(out)
 
     @staticmethod
     def binary(addr, prefix: int) -> str:
@@ -360,16 +398,24 @@ class CheckTab(QWidget):
 
         i = SubnetInfo(res.subnet)
         d = self.detail_labels
+        v6 = i.is_v6
+        names = {"Broadcast address": "Last address" if v6 else "Broadcast address",
+                 "Usable hosts": "Addresses" if v6 else "Usable hosts",
+                 "IP in binary": "IP (hex)" if v6 else "IP in binary",
+                 "Subnet in binary": "Subnet (hex)" if v6 else "Subnet in binary"}
+        for key, text in names.items():
+            self.details.labelForField(d[key]).setText(text)
         d["Subnet"].setText(i.cidr)
         d["Netmask"].setText(i.netmask)
         d["Wildcard"].setText(i.wildcard)
         d["Network address"].setText(str(i.first))
         d["Broadcast address"].setText(str(i.last))
         d["Usable range"].setText(i.usable_range)
-        d["Usable hosts"].setText(f"{i.hosts:,}")
+        d["Usable hosts"].setText(i.hosts_text)
         p = res.subnet.prefixlen
-        d["IP in binary"].setText(self.binary(res.candidate.network_address, p))
-        d["Subnet in binary"].setText(self.binary(res.subnet.network_address, p))
+        view = self.hexview if v6 else self.binary
+        d["IP in binary"].setText(view(res.candidate.network_address, p))
+        d["Subnet in binary"].setText(view(res.subnet.network_address, p))
         self.btn_open.setEnabled(True)
 
     def open_subnet(self):
@@ -391,6 +437,8 @@ class MainWindow(QMainWindow):
         self.checker = CheckTab(self.settings, self.open_in_splitter)
         self.tabs.addTab(self.splitter, "Subnet Splitter")
         self.tabs.addTab(self.checker, "IP in Subnet?")
+        self.motd = MotdTab(self.settings)
+        self.tabs.addTab(self.motd, "MOTD Builder")
         self.tabs.setCurrentIndex(int(self.settings.value("window/tab", 0)))
         self.setCentralWidget(self.tabs)
 
@@ -421,13 +469,15 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, f"About {APP_NAME}",
             f"<h3>{APP_NAME} {__version__}</h3>"
-            "<p>Small network tools for system administrators.</p>"
+            "<p>Small tools for system administrators: subnet splitter, "
+            "IP-in-subnet check (IPv4 and IPv6) and MOTD builder.</p>"
             f"<p><a href='{REPO_URL}'>{REPO_URL}</a><br>MIT License</p>")
 
     def closeEvent(self, event):
         self.settings.setValue("window/geometry", self.saveGeometry())
         self.settings.setValue("window/tab", self.tabs.currentIndex())
         self.splitter.save_state()
+        self.motd.save_state()
         event.accept()
 
 
@@ -465,7 +515,20 @@ def selftest(report: str | None = None) -> int:
         assert ck.result and ck.result.status == "inside"
         ck.ed_ip.setText("192.168.2.10")
         assert ck.result.status == "outside"
-        lines.append("checker ok")
+        ck.ed_ip.setText("2001:db8::10")
+        ck.ed_subnet.setText("2001:db8::/64")
+        assert ck.result.status == "inside"
+        lines.append("checker ok (IPv4 + IPv6)")
+        assert sp.load("2001:db8::/48")
+        sp.tree.root.join()
+        sp.divide(sp.tree.root, 4)
+        assert sp.table.rowCount() == 16
+        lines.append("IPv6 splitter ok")
+        mt = win.motd
+        mt.ed_banner.setText("selftest")
+        mt.cmb_target.setCurrentIndex(mt.cmb_target.findData("debian"))
+        assert mt.result and "Hostname:" in mt.result.content and "#!/bin/bash" in mt.result.content
+        lines.append("motd ok")
         win.close()
         lines.append("SELFTEST PASSED")
     except Exception:
