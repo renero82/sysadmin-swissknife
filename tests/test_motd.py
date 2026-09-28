@@ -1,11 +1,14 @@
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 from sysadmin_swissknife.motd import FONTS, FRAMES, ICONS, LEGAL_EN, MotdConfig, build
 
-BASH = shutil.which("bash")
+# The generated scripts target Linux servers: run them only where a real Unix bash exists.
+# On Windows, "bash" is Git Bash or the WSL launcher and the check makes no sense there.
+BASH = shutil.which("bash") if sys.platform != "win32" else None
 
 
 def text(res):
@@ -39,7 +42,7 @@ def test_frames_are_rectangular(frame):
     assert len(widths) == 1, widths
 
 
-@pytest.mark.skipif(not BASH, reason="bash not available")
+@pytest.mark.skipif(not BASH, reason="needs a Unix bash (skipped on Windows)")
 @pytest.mark.parametrize("target", ["debian", "rhel"])
 @pytest.mark.parametrize("frame", ["none", "double"])
 def test_scripts_are_valid_and_run(tmp_path, target, frame):
