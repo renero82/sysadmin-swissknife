@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+- New **IP List**: every address of a subnet (IPv4 or IPv6, up to 65,536) ready to copy or
+  save, usable addresses only or all of them, one per line or comma/space/semicolon separated.
+  An **Exclude** field removes the addresses already in use (single IPs, ranges like
+  `192.168.1.10-20`, or networks).
+- IP in Subnet?: new button to list the IPs of the subnet.
+
 ## 1.2.0
 - **IPv6** in the Subnet Splitter and in IP in Subnet? (hex view, anycast note, 2^n counts).
 - Subnet Splitter: **Divide into** 2, 4, 16 or 256 parts; the saved layout keeps the grouping.

@@ -10,12 +10,12 @@ from PySide6.QtCore import QSettings, Qt, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QFontDatabase, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame, QGroupBox,
-    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
+    QHBoxLayout, QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from . import APP_NAME, __version__
-from .subnet import SubnetInfo, SubnetTree, check, format_count, parse_network
+from .subnet import SubnetInfo, SubnetTree, check, format_count, list_addresses, parse_network
 from .motd_tab import MotdTab
 
 REPO_URL = "https://github.com/renero82/sysadmin-swissknife"
@@ -283,10 +283,11 @@ class SplitterTab(QWidget):
 
 # =============================================================================== checker
 class CheckTab(QWidget):
-    def __init__(self, settings: QSettings, open_in_splitter):
+    def __init__(self, settings: QSettings, open_in_splitter, open_in_list=None):
         super().__init__()
         self.settings = settings
         self.open_in_splitter = open_in_splitter
+        self.open_in_list = open_in_list
         root = QVBoxLayout(self)
 
         form = QFormLayout()
@@ -333,6 +334,9 @@ class CheckTab(QWidget):
         row.addStretch()
         self.btn_open = QPushButton("Open this subnet in the Splitter")
         self.btn_open.clicked.connect(self.open_subnet)
+        self.btn_list = QPushButton("List the IPs of this subnet")
+        self.btn_list.clicked.connect(self.list_subnet)
+        row.addWidget(self.btn_list)
         row.addWidget(self.btn_open)
         root.addLayout(row)
         root.addStretch()
@@ -386,6 +390,7 @@ class CheckTab(QWidget):
             for lbl in self.detail_labels.values():
                 lbl.setText("")
             self.btn_open.setEnabled(False)
+            self.btn_list.setEnabled(False)
             return
         self.result = res
         if res.status == "inside":
@@ -417,10 +422,120 @@ class CheckTab(QWidget):
         d["IP in binary"].setText(view(res.candidate.network_address, p))
         d["Subnet in binary"].setText(view(res.subnet.network_address, p))
         self.btn_open.setEnabled(True)
+        self.btn_list.setEnabled(self.open_in_list is not None)
 
     def open_subnet(self):
         if self.result:
             self.open_in_splitter(str(self.result.subnet))
+
+    def list_subnet(self):
+        if self.result and self.open_in_list:
+            self.open_in_list(str(self.result.subnet))
+
+
+# =============================================================================== IP list
+SEPARATORS = [("One per line", "\n"), ("Comma", ", "), ("Space", " "), ("Semicolon", "; ")]
+
+
+class IpListTab(QWidget):
+    """Every address of a subnet in a text box, ready to copy into a field or a config file."""
+
+    def __init__(self, settings: QSettings):
+        super().__init__()
+        self.settings = settings
+        self.result = None
+        root = QVBoxLayout(self)
+
+        form = QFormLayout()
+        self.ed_subnet = QLineEdit(self.settings.value("list/subnet", "192.168.1.0/28"))
+        self.ed_subnet.setPlaceholderText("e.g. 192.168.1.0/24,  192.168.1.0 255.255.255.0  or  2001:db8::/120")
+        self.ed_exclude = QLineEdit(self.settings.value("list/exclude", ""))
+        self.ed_exclude.setPlaceholderText(
+            "optional: addresses already in use, e.g. 192.168.1.1, 192.168.1.10-20, 192.168.1.64/28")
+        for ed in (self.ed_subnet, self.ed_exclude):
+            ed.setFont(mono_font())
+            ed.textChanged.connect(self.evaluate)
+        form.addRow("Subnet", self.ed_subnet)
+        form.addRow("Exclude", self.ed_exclude)
+        root.addLayout(form)
+
+        opts = QHBoxLayout()
+        self.cb_usable = QCheckBox("Usable addresses only")
+        self.cb_usable.setToolTip("IPv4: without network and broadcast address (/31 and /32 keep everything)\n"
+                                  "IPv6: without the Subnet-Router anycast address")
+        self.cb_usable.setChecked(self.settings.value("list/usable", "true") == "true")
+        self.cb_usable.toggled.connect(self.evaluate)
+        opts.addWidget(self.cb_usable)
+        opts.addStretch()
+        opts.addWidget(QLabel("Separator"))
+        self.cmb_sep = QComboBox()
+        for label, sep in SEPARATORS:
+            self.cmb_sep.addItem(label, sep)
+        self.cmb_sep.setCurrentIndex(int(self.settings.value("list/separator", 0)))
+        self.cmb_sep.currentIndexChanged.connect(self.evaluate)
+        opts.addWidget(self.cmb_sep)
+        root.addLayout(opts)
+
+        self.lbl_status = QLabel()
+        self.lbl_status.setWordWrap(True)
+        root.addWidget(self.lbl_status)
+
+        self.txt = QPlainTextEdit()
+        self.txt.setReadOnly(True)
+        self.txt.setFont(mono_font())
+        root.addWidget(self.txt, stretch=1)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        self.btn_copy = QPushButton("Copy")
+        self.btn_copy.clicked.connect(self.copy)
+        self.btn_save = QPushButton("Save as .txt…")
+        self.btn_save.clicked.connect(self.save)
+        row.addWidget(self.btn_copy)
+        row.addWidget(self.btn_save)
+        root.addLayout(row)
+
+        self.evaluate()
+
+    def show_subnet(self, cidr: str):
+        self.ed_subnet.setText(cidr)
+
+    def evaluate(self, *_):
+        s = self.settings
+        s.setValue("list/subnet", self.ed_subnet.text())
+        s.setValue("list/exclude", self.ed_exclude.text())
+        s.setValue("list/usable", "true" if self.cb_usable.isChecked() else "false")
+        s.setValue("list/separator", self.cmb_sep.currentIndex())
+        try:
+            res = list_addresses(self.ed_subnet.text(), self.cb_usable.isChecked(), self.ed_exclude.text())
+        except ValueError as exc:
+            self.result = None
+            self.lbl_status.setText(f"<span style='color:#d64545'>{str(exc)}</span>")
+            self.txt.clear()
+            self.btn_copy.setEnabled(False)
+            self.btn_save.setEnabled(False)
+            return
+        self.result = res
+        parts = [f"<b>{len(res.addresses):,}</b> addresses in <b>{res.network}</b>"]
+        if res.excluded:
+            parts.append(f"{res.excluded:,} excluded")
+        if res.host_bits:
+            parts.append(f"the subnet had host bits set, it was read as {res.network}")
+        self.lbl_status.setText(" — ".join(parts))
+        self.txt.setPlainText(res.as_text(self.cmb_sep.currentData()))
+        self.btn_copy.setEnabled(bool(res.addresses))
+        self.btn_save.setEnabled(bool(res.addresses))
+
+    def copy(self):
+        QApplication.clipboard().setText(self.txt.toPlainText())
+
+    def save(self):
+        if not self.result:
+            return
+        name = str(self.result.network).replace("/", "_").replace(":", "-") + ".txt"
+        path, _ = QFileDialog.getSaveFileName(self, "Save the address list", name, "Text files (*.txt)")
+        if path:
+            Path(path).write_text(self.txt.toPlainText() + "\n", encoding="utf-8")
 
 
 # =============================================================================== window
@@ -434,9 +549,11 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
         self.splitter = SplitterTab(self.settings)
-        self.checker = CheckTab(self.settings, self.open_in_splitter)
+        self.checker = CheckTab(self.settings, self.open_in_splitter, self.open_in_list)
+        self.iplist = IpListTab(self.settings)
         self.tabs.addTab(self.splitter, "Subnet Splitter")
         self.tabs.addTab(self.checker, "IP in Subnet?")
+        self.tabs.addTab(self.iplist, "IP List")
         self.motd = MotdTab(self.settings)
         self.tabs.addTab(self.motd, "MOTD Builder")
         self.tabs.setCurrentIndex(int(self.settings.value("window/tab", 0)))
@@ -460,6 +577,10 @@ class MainWindow(QMainWindow):
         if geom is not None:
             self.restoreGeometry(geom)
 
+    def open_in_list(self, cidr: str):
+        self.iplist.show_subnet(cidr)
+        self.tabs.setCurrentWidget(self.iplist)
+
     def open_in_splitter(self, cidr: str):
         self.splitter.ed_network.setText(cidr)
         self.splitter.load(cidr)
@@ -470,7 +591,7 @@ class MainWindow(QMainWindow):
             self, f"About {APP_NAME}",
             f"<h3>{APP_NAME} {__version__}</h3>"
             "<p>Small tools for system administrators: subnet splitter, "
-            "IP-in-subnet check (IPv4 and IPv6) and MOTD builder.</p>"
+            "IP-in-subnet check and IP list (IPv4 and IPv6), MOTD builder.</p>"
             f"<p><a href='{REPO_URL}'>{REPO_URL}</a><br>MIT License</p>")
 
     def closeEvent(self, event):
@@ -524,6 +645,12 @@ def selftest(report: str | None = None) -> int:
         sp.divide(sp.tree.root, 4)
         assert sp.table.rowCount() == 16
         lines.append("IPv6 splitter ok")
+        il = win.iplist
+        il.ed_exclude.setText("192.168.5.1")
+        il.show_subnet("192.168.5.0/29")
+        assert il.result and il.result.addresses[0] == "192.168.5.2" and len(il.result.addresses) == 5
+        assert il.txt.toPlainText().splitlines()[-1] == "192.168.5.6"
+        lines.append("ip list ok")
         mt = win.motd
         mt.ed_banner.setText("selftest")
         mt.cmb_target.setCurrentIndex(mt.cmb_target.findData("debian"))

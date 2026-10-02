@@ -331,3 +331,84 @@ def check(candidate_text: str, subnet_text: str) -> CheckResult:
     if cand_hb and not single:
         notes.append(f"the first value had host bits set, it was read as {cand}")
     return CheckResult(cand, sub, status, cand_hb, sub_hb, tuple(notes))
+
+
+# --------------------------------------------------------------------------- address list
+MAX_LIST = 65_536          # largest list the IP List tool produces (a /16, or a /112 in IPv6)
+
+
+def parse_exclusions(text: str, version: int) -> list[tuple[int, int]]:
+    """Addresses to leave out of a list, as sorted (first, last) integer ranges.
+
+    Items are separated by commas, semicolons, spaces or new lines; each one can be an address
+    (``192.168.1.1``), a network (``192.168.1.0/28``) or a range (``192.168.1.10-192.168.1.20``,
+    or the short IPv4 form ``192.168.1.10-20``).
+    """
+    ranges = []
+    for item in text.replace(",", " ").replace(";", " ").split():
+        try:
+            if "-" in item:
+                a, b = item.split("-", 1)
+                first = ipaddress.ip_address(a)
+                if version == 4 and b.isdigit():          # 192.168.1.10-20
+                    b = a.rsplit(".", 1)[0] + "." + b
+                last = ipaddress.ip_address(b)
+                if first.version != last.version:
+                    raise ValueError
+                if int(last) < int(first):
+                    first, last = last, first
+            else:
+                net = ipaddress.ip_network(item, strict=False)
+                first, last = net.network_address, net.broadcast_address
+        except ValueError:
+            raise ValueError(f"not a valid address, network or range to exclude: {item!r}") from None
+        if first.version != version:
+            raise ValueError(f"{item} is IPv{first.version}, the subnet is IPv{version}")
+        ranges.append((int(first), int(last)))
+    return sorted(ranges)
+
+
+@dataclass(frozen=True)
+class AddressList:
+    network: IPNetwork
+    addresses: tuple[str, ...]
+    excluded: int                # how many addresses of the range were removed by the exclusions
+    host_bits: bool              # the subnet was typed with host bits set
+    usable_only: bool
+
+    def as_text(self, separator: str = "\n") -> str:
+        return separator.join(self.addresses)
+
+
+def list_addresses(subnet_text: str, usable_only: bool = True, exclude_text: str = "",
+                   limit: int = MAX_LIST) -> AddressList:
+    """All the addresses of a subnet, optionally only the usable ones and minus the exclusions.
+
+    ``usable_only`` drops the network and broadcast address of IPv4 subnets up to /30
+    (/31 and /32 keep everything, RFC 3021) and the Subnet-Router anycast address of IPv6 subnets
+    up to /126 (RFC 4291).
+    """
+    net, host_bits = parse_network(subnet_text)
+    first, last = int(net.network_address), int(net.broadcast_address)
+    if usable_only:
+        if net.version == 4 and net.prefixlen <= 30:
+            first, last = first + 1, last - 1
+        elif net.version == 6 and net.prefixlen <= 126:
+            first += 1
+    size = last - first + 1
+    if size > limit:
+        smallest = net.max_prefixlen - (limit.bit_length() - 1)
+        raise ValueError(f"{net} has {format_count(net.num_addresses)} addresses: the list is limited to "
+                         f"{limit:,} (a /{smallest} or smaller)")
+    cls = ipaddress.IPv4Address if net.version == 4 else ipaddress.IPv6Address
+    out, excluded = [], 0
+    ranges = parse_exclusions(exclude_text, net.version)
+    r = 0
+    for n in range(first, last + 1):
+        while r < len(ranges) and ranges[r][1] < n:
+            r += 1
+        if r < len(ranges) and ranges[r][0] <= n:
+            excluded += 1
+            continue
+        out.append(str(cls(n)))
+    return AddressList(net, tuple(out), excluded, host_bits, usable_only)

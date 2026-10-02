@@ -1,7 +1,7 @@
 # Sysadmin Swissknife
 
 Small tools for system administrators, as a desktop app for **macOS** and **Windows**:
-a visual subnet splitter and an IP-in-subnet check (IPv4 and IPv6), and a MOTD builder
+a visual subnet splitter, an IP-in-subnet check and an IP list (IPv4 and IPv6), and a MOTD builder
 with ASCII-art banners.
 
 ![Subnet Splitter](docs/splitter.png)
@@ -34,6 +34,18 @@ Type an address and a subnet and see immediately if it is **inside** or **outsid
 - one click opens the subnet in the Splitter
 
 ![IPv6 check](docs/ipv6.png)
+
+### IP List
+![IP List](docs/iplist.png)
+
+Every address of a subnet in a text box, ready to paste into a field, a config file or a script:
+
+- usable addresses only (no network/broadcast, RFC 3021 for /31 and /32) or all of them
+- **Exclude** the addresses already in use: single IPs, ranges (`192.168.1.10-20` or
+  `192.168.1.10-192.168.1.20`) and networks (`192.168.1.64/28`)
+- one per line, or separated by comma, space or semicolon
+- **Copy** or **Save as .txt**
+- IPv6 too; up to 65,536 addresses (a /16 in IPv4, a /112 in IPv6)
 
 ### MOTD Builder
 ![MOTD Builder](docs/motd.png)
