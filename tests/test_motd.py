@@ -56,7 +56,7 @@ def test_scripts_are_valid_and_run(tmp_path, target, frame):
     if target == "debian":
         out = subprocess.run([BASH, str(f)], capture_output=True, text=True, check=True).stdout
     else:
-        out = subprocess.run([BASH, "-ic", f"source {f}"], capture_output=True, text=True,
+        out = subprocess.run([BASH, "--norc", "--noprofile", "-ic", f"source {f}"], capture_output=True, text=True,
                              check=True).stdout
         # non-interactive shells must stay silent (scp, cron, scripts...)
         quiet = subprocess.run([BASH, "-c", f"source {f}"], capture_output=True, text=True)
