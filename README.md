@@ -104,6 +104,12 @@ Pushing a tag like `v1.1.0` makes GitHub Actions run the tests, build the macOS 
 `--selftest` and publish the release. The tag must match the version in
 `sysadmin_swissknife/__init__.py`.
 
+## Code signing
+
+Free code signing for the Windows builds is planned through the [SignPath Foundation](https://signpath.org).
+It is not active yet: current releases are unsigned. See the [code signing policy](CODE_SIGNING.md)
+for status, roles and privacy policy.
+
 ## License
 
 [MIT](LICENSE)
