@@ -19,6 +19,7 @@ from .subnet import SubnetInfo, SubnetTree, check, format_count, list_addresses,
 from .motd_tab import MotdTab
 
 REPO_URL = "https://github.com/renero82/sysadmin-swissknife"
+COFFEE_URL = "https://buymeacoffee.com/renero82"
 
 # (key, header, getter) - optional columns of the splitter table
 INFO_COLUMNS = [
@@ -567,6 +568,9 @@ class MainWindow(QMainWindow):
         site = QAction("Project page on GitHub", self)
         site.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(REPO_URL)))
         help_menu.addAction(site)
+        coffee = QAction("\u2615 Buy me a coffee", self)
+        coffee.triggered.connect(lambda: QDesktopServices.openUrl(QUrl(COFFEE_URL)))
+        help_menu.addAction(coffee)
 
         quit_action = QAction(self)
         quit_action.setShortcut(QKeySequence.Quit)
