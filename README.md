@@ -1,5 +1,7 @@
 # Sysadmin Swissknife
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-renero82-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/renero82)
+
 Small tools for system administrators, as a desktop app for **macOS** and **Windows**:
 a visual subnet splitter, an IP-in-subnet check and an IP list (IPv4 and IPv6), and a MOTD builder
 with ASCII-art banners.
